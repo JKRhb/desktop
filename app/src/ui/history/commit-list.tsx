@@ -9,6 +9,8 @@ import { Popover, PopoverCaretPosition } from '../lib/popover'
 import { Button } from '../lib/button'
 import { encodePathAsUrl } from '../../lib/path'
 import { DragData, DragType } from '../../models/drag-drop'
+import { DragAndDropIntroType } from './drag-and-drop-intro-type'
+import { assertNever } from '../../lib/fatal-error'
 
 const RowHeight = 50
 
@@ -118,11 +120,11 @@ interface ICommitListProps {
   /** Whether or not commits in this list can be reordered. */
   readonly reorderingEnabled: boolean
 
-  /* Whether or not the user has been introduced to cherry picking feature */
-  readonly hasShownCherryPickIntro: boolean
+  /* Types of drag and drop intros already seen by the user */
+  readonly dragAndDropIntroTypesShown: ReadonlySet<DragAndDropIntroType>
 
-  /** Callback to fire when cherry pick intro popover has been dismissed */
-  readonly onDismissCherryPickIntro: () => void
+  /** Callback to fire when a drag & drop intro popover has been seen */
+  readonly onDragAndDropIntroSeen: (intro: DragAndDropIntroType) => void
 
   /** Whether a cherry pick is progress */
   readonly isCherryPickInProgress: boolean
@@ -140,9 +142,36 @@ interface ICommitListProps {
   readonly disableSquashing?: boolean
 }
 
+interface ICommitListState {
+  /** Remaining drag and drop intros to show in the popover. */
+  readonly remainingDragAndDropIntros: ReadonlyArray<DragAndDropIntroType>
+}
+
 /** A component which displays the list of commits. */
-export class CommitList extends React.Component<ICommitListProps, {}> {
+export class CommitList extends React.Component<
+  ICommitListProps,
+  ICommitListState
+> {
   private commitsHash = memoize(makeCommitsHash, arrayEquals)
+
+  public constructor(props: ICommitListProps) {
+    super(props)
+
+    const allDragAndDropIntros = [
+      DragAndDropIntroType.CherryPick,
+      DragAndDropIntroType.Squash,
+      DragAndDropIntroType.Reorder,
+    ]
+
+    const remainingDragAndDropIntros = allDragAndDropIntros.filter(
+      intro => !props.dragAndDropIntroTypesShown.has(intro)
+    )
+
+    this.state = {
+      remainingDragAndDropIntros,
+    }
+  }
+
   private getVisibleCommits(): ReadonlyArray<Commit> {
     const commits = new Array<Commit>()
     for (const sha of this.props.commitSHAs) {
@@ -332,7 +361,7 @@ export class CommitList extends React.Component<ICommitListProps, {}> {
   }
 
   private renderCherryPickIntroPopover() {
-    if (this.props.hasShownCherryPickIntro) {
+    if (this.state.remainingDragAndDropIntros.length === 0) {
       return null
     }
 
@@ -341,24 +370,62 @@ export class CommitList extends React.Component<ICommitListProps, {}> {
       'static/cherry-pick-intro.png'
     )
 
+    const nextButtonTitle =
+      this.state.remainingDragAndDropIntros.length > 1 ? 'Next' : 'Got it'
+
     return (
       <Popover caretPosition={PopoverCaretPosition.LeftTop}>
         <img src={cherryPickIntro} className="cherry-pick-intro" />
         <h3>
-          Drag and drop to cherry pick!
+          Drag and drop your commits!
           <span className="call-to-action-bubble">New</span>
         </h3>
-        <p>
-          Copy commits to another branch by dragging and dropping them onto a
-          branch in the branch menu, or by right clicking on a commit.
-        </p>
+        <p>{this.getDragAndDropIntroText()}</p>
         <div>
-          <Button onClick={this.props.onDismissCherryPickIntro} type="submit">
-            Got it
+          <Button onClick={this.onNextDragAndDropIntro} type="submit">
+            {nextButtonTitle}
           </Button>
         </div>
       </Popover>
     )
+  }
+
+  private onNextDragAndDropIntro = () => {
+    if (this.state.remainingDragAndDropIntros.length === 0) {
+      return
+    }
+
+    const intro = this.state.remainingDragAndDropIntros[0]
+
+    this.setState({
+      remainingDragAndDropIntros: this.state.remainingDragAndDropIntros.slice(
+        1
+      ),
+    })
+
+    this.props.onDragAndDropIntroSeen(intro)
+  }
+
+  private getDragAndDropIntroText() {
+    if (this.state.remainingDragAndDropIntros.length === 0) {
+      return null
+    }
+
+    const intro = this.state.remainingDragAndDropIntros[0]
+
+    switch (intro) {
+      case DragAndDropIntroType.CherryPick:
+        return `Copy commits to another branch by dragging and dropping them
+        onto a branch in the branch menu, or by right clicking on a commit.`
+      case DragAndDropIntroType.Squash:
+        return `Squash commits by dragging and dropping them onto another commit,
+        or by right clicking on multiple commits.`
+      case DragAndDropIntroType.Reorder:
+        return `Reorder commits to tidy up your history by dragging and dropping
+        them in a different position.`
+      default:
+        assertNever(intro, `Invalud drag & drop intro type ${intro}`)
+    }
   }
 
   public render() {
